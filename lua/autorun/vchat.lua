@@ -51,10 +51,10 @@ CreateConVar("vchat_emotes", "0", FCVAR_ARCHIVE, "Enable NPC reaction to ActMod 
 CreateConVar("vchat_emotes_range", "1200", FCVAR_ARCHIVE, "Detection range for emotes", 0, 5000)
 
 CreateConVar("vchat_volume_scaling", "1", FCVAR_ARCHIVE, "Scale detection range by voice volume (louder = farther)", 0, 1)
-CreateConVar("vchat_volume_scale_factor", "1.5", FCVAR_ARCHIVE, "Volume scaling multiplier for range", 0.1, 5)
+CreateConVar("vchat_volume_scale_factor", "1.35", FCVAR_ARCHIVE, "Maximum voice volume scaling multiplier for range", 0.1, 5)
 CreateConVar("vchat_wall_min_volume_multiplier", "0.25", FCVAR_ARCHIVE, "Minimum volume range multiplier when a wall blocks the sound path", 0.1, 1)
 CreateConVar("vchat_wall_muffle", "1", FCVAR_ARCHIVE, "Reduce detection range when walls are between source and NPC", 0, 1)
-CreateConVar("vchat_wall_muffle_factor", "0.65", FCVAR_ARCHIVE, "Wall muffle range multiplier (0.65 = 65% range through each blocker)", 0.01, 1)
+CreateConVar("vchat_wall_muffle_factor", "0.65", FCVAR_ARCHIVE, "Wall muffle range multiplier (0.65 = 65% range through one blocker before voice loudness adjustment)", 0.01, 1)
 CreateConVar("vchat_underwater_muffle", "1", FCVAR_ARCHIVE, "Reduce detection range when source is underwater", 0, 1)
 CreateConVar("vchat_underwater_muffle_factor", "0.5", FCVAR_ARCHIVE, "Underwater muffle range multiplier (0.5 = 50% range while submerged)", 0.01, 1)
 CreateConVar("vchat_ignore_height", "0", FCVAR_ARCHIVE, "Ignore vertical distance in detection range (use 2D horizontal only)", 0, 1)
@@ -71,13 +71,16 @@ if CLIENT then
     local speaking = false
     local isReady  = false
     local lastVolume = 0
+    local lastVolumeUpdate = 0
 
     local function SetState(newState, volume)
         if not isReady then return end
         if not GetConVar("vchat_enabled"):GetBool() then return end
         if speaking == newState then
-            if newState and volume ~= lastVolume then
+            local now = CurTime()
+            if newState and math.abs((volume or 0) - lastVolume) >= 0.05 and now - lastVolumeUpdate >= 0.1 then
                 lastVolume = volume
+                lastVolumeUpdate = now
                 net.Start("VChatVolume")
                     net.WriteFloat(volume)
                 net.SendToServer()
@@ -86,23 +89,39 @@ if CLIENT then
         end
         speaking = newState
         lastVolume = volume or 0
+        lastVolumeUpdate = CurTime()
         net.Start("VChatVoiceState")
             net.WriteBool(speaking)
             net.WriteFloat(lastVolume)
         net.SendToServer()
     end
 
-    hook.Add("Think", "VChatVoiceCheck", function()
+    local function OnVChatVoiceThink()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
         local vol = lp:VoiceVolume()
-        SetState(vol > GetConVar("vchat_threshold"):GetFloat(), vol)
-    end)
+        local threshold = GetConVar("vchat_threshold"):GetFloat()
+        local releaseThreshold = threshold * 0.65
+        local voiceActive = speaking and vol > releaseThreshold or vol > threshold
+        SetState(voiceActive, vol)
+    end
+
+    local function UpdateVoiceThinkHook()
+        if GetConVar("vchat_enabled"):GetBool() then
+            hook.Add("Think", "VChatVoiceCheck", OnVChatVoiceThink)
+        else
+            hook.Remove("Think", "VChatVoiceCheck")
+        end
+    end
+
+    cvars.AddChangeCallback("vchat_enabled", UpdateVoiceThinkHook, "VChatVoiceEnable")
+    UpdateVoiceThinkHook()
 
     hook.Add("InitPostEntity", "VChatVoiceReset", function()
         speaking = false
         isReady  = false
         lastVolume = 0
+        lastVolumeUpdate = 0
         timer.Simple(3, function() isReady = true end)
     end)
 
@@ -126,7 +145,7 @@ if CLIENT then
             panel:AddControl("Label", {Text = ""})
 
             panel:AddControl("CheckBox", { Label = "Debug Mode", Command = "vchat_debug" })
-            panel:AddControl("Label", {Text = "Show console debug messages for all NPC reactions"})
+            panel:AddControl("Label", {Text = "Show debug messages in console"})
             panel:AddControl("Label", {Text = ""})
 
             panel:AddControl("Slider", { Label = "Mic Threshold", Command = "vchat_threshold", Type = "Float", Min = "0", Max = "1" })
@@ -139,7 +158,7 @@ if CLIENT then
             panel:AddControl("Label", {Text = ""})
 
             panel:AddControl("CheckBox", { Label = "Require Line of Sight", Command = "vchat_los_required" })
-            panel:AddControl("Label", {Text = "NPCs must see the sound source to react (why ?)"})
+            panel:AddControl("Label", {Text = "NPCs must see the sound source to react"})
             panel:AddControl("Label", {Text = ""})
 
             panel:AddControl("CheckBox", { Label = "Admin Immunity", Command = "vchat_admin_immune" })
@@ -169,7 +188,7 @@ if CLIENT then
             panel:AddControl("Label", {Text = ""})
 
             panel:AddControl("Slider", { Label = "Volume Scale Factor", Command = "vchat_volume_scale_factor", Type = "Float", Min = "0.1", Max = "5" })
-            panel:AddControl("Label", {Text = "Multiplier for how much volume affects detection range"})
+            panel:AddControl("Label", {Text = "Louder speech carries farther; the curve keeps quiet speech detectable nearby"})
             panel:AddControl("Label", {Text = ""})
 
             panel:AddControl("Slider", { Label = "Minimum Voice Range Through Walls", Command = "vchat_wall_min_volume_multiplier", Type = "Float", Min = "0.1", Max = "1" })
@@ -199,7 +218,7 @@ if CLIENT then
             local resetSoundBtn = panel:Button("Reset Sound Features")
             resetSoundBtn.DoClick = function()
                 RunConsoleCommand("vchat_volume_scaling", "1")
-                RunConsoleCommand("vchat_volume_scale_factor", "1.5")
+                RunConsoleCommand("vchat_volume_scale_factor", "1.35")
                 RunConsoleCommand("vchat_wall_min_volume_multiplier", "0.25")
                 RunConsoleCommand("vchat_wall_muffle", "1")
                 RunConsoleCommand("vchat_wall_muffle_factor", "0.65")
@@ -380,7 +399,7 @@ if CLIENT then
                 RunConsoleCommand("vchat_emotes", "0")
                 RunConsoleCommand("vchat_emotes_range", "1200")
                 RunConsoleCommand("vchat_volume_scaling", "1")
-                RunConsoleCommand("vchat_volume_scale_factor", "1.5")
+                RunConsoleCommand("vchat_volume_scale_factor", "1.35")
                 RunConsoleCommand("vchat_wall_min_volume_multiplier", "0.25")
                 RunConsoleCommand("vchat_wall_muffle", "1")
                 RunConsoleCommand("vchat_wall_muffle_factor", "0.65")
@@ -432,15 +451,32 @@ if SERVER then
       end
     end
 
+    local debugLastPrinted = {}
+    local debugLastPrintedCount = 0
+    local DEBUG_REPEAT_CACHE_LIMIT = 512
+    local DEBUG_REPEAT_INTERVAL = 1
+
     local function Debug(event, ...)
         if not GetConVar("vchat_debug"):GetBool() then return end
         local fields = {}
         for i = 1, select("#", ...) do
             fields[#fields + 1] = tostring(select(i, ...))
         end
+        local eventName = string.upper(event)
+        local repeatKey = eventName .. "|" .. table.concat(fields, "|", 1, math.min(#fields, 3))
+        local now = CurTime()
+        if debugLastPrinted[repeatKey] and now - debugLastPrinted[repeatKey] < DEBUG_REPEAT_INTERVAL then return end
+        if not debugLastPrinted[repeatKey] then
+            debugLastPrintedCount = debugLastPrintedCount + 1
+            if debugLastPrintedCount > DEBUG_REPEAT_CACHE_LIMIT then
+                table.Empty(debugLastPrinted)
+                debugLastPrintedCount = 1
+            end
+        end
+        debugLastPrinted[repeatKey] = now
         local timestamp = os.date("%H:%M:%S")
         local details = #fields > 0 and (" " .. table.concat(fields, " | ")) or ""
-        print("[" .. timestamp .. "] [VChat][" .. string.upper(event) .. "]" .. details)
+        print("[" .. timestamp .. "] [VChat][" .. eventName .. "]" .. details)
     end
 
     local vchatSource = debug.getinfo(Debug, "S").source
@@ -452,21 +488,40 @@ if SERVER then
             or string.find(source, "lua\\", 1, true) ~= nil
     end
 
+    local loggedExternalAPICalls = {}
+    local externalHookScanTimes = {}
+    local loggedExternalHookHandlers = {}
+    local externalCallbackSources = setmetatable({}, {__mode = "k"})
+
     local function DebugExternalCallback(apiName, callback, ...)
         if not GetConVar("vchat_debug"):GetBool() or not isfunction(callback) then return end
-        local info = debug.getinfo(callback, "S")
-        if not info or not IsExternalAPISource(info.source) then return end
-        Debug("API", "api=" .. apiName, "mod_source=" .. info.source, ...)
+        local source = externalCallbackSources[callback]
+        if source == nil then
+            local info = debug.getinfo(callback, "S")
+            source = info and IsExternalAPISource(info.source) and info.source or false
+            externalCallbackSources[callback] = source
+        end
+        if not source then return end
+        local key = apiName .. "|" .. source
+        if loggedExternalAPICalls[key] then return end
+        loggedExternalAPICalls[key] = true
+        Debug("API", "api=" .. apiName, "mod_source=" .. source, ...)
     end
 
     local function DebugExternalHook(hookName, ...)
         if not GetConVar("vchat_debug"):GetBool() then return end
+        local now = CurTime()
+        if externalHookScanTimes[hookName] and now - externalHookScanTimes[hookName] < 5 then return end
+        externalHookScanTimes[hookName] = now
         local callbacks = hook.GetTable()[hookName]
         if not istable(callbacks) then return end
         for identifier, callback in pairs(callbacks) do
             if not isfunction(callback) then continue end
             local info = debug.getinfo(callback, "S")
             if info and IsExternalAPISource(info.source) then
+                local key = hookName .. "|" .. tostring(identifier) .. "|" .. info.source
+                if loggedExternalHookHandlers[key] then continue end
+                loggedExternalHookHandlers[key] = true
                 Debug("API", "hook=" .. hookName, "handler=" .. tostring(identifier), "mod_source=" .. info.source, ...)
             end
         end
@@ -482,36 +537,56 @@ if SERVER then
         return a:Distance(b)
     end
 
+    local function IsWithinRange(a, b, range)
+        if not isvector(a) or not isvector(b) or not isnumber(range) then return false end
+        local dx = a.x - b.x
+        local dy = a.y - b.y
+        local distanceSquared = dx * dx + dy * dy
+        if not GetConVar("vchat_ignore_height"):GetBool() then
+            local dz = a.z - b.z
+            distanceSquared = distanceSquared + dz * dz
+        end
+        return distanceSquared <= range * range
+    end
+
     VChat.NPCBlacklist = VChat.NPCBlacklist or {}
 
     function VChat.AddBlacklist(class)
         if not isstring(class) then
-            local caller = debug.getinfo(2, "S")
-            if caller and IsExternalAPISource(caller.source) then
-                Debug("API", "api=VChat.AddBlacklist", "mod_source=" .. caller.source, "result=rejected", "reason=class must be a string")
+            if GetConVar("vchat_debug"):GetBool() then
+                local caller = debug.getinfo(2, "S")
+                if caller and IsExternalAPISource(caller.source) then
+                    Debug("API", "api=VChat.AddBlacklist", "mod_source=" .. caller.source, "result=rejected", "reason=class must be a string")
+                end
             end
             return false
         end
         VChat.NPCBlacklist[class] = true
-        local caller = debug.getinfo(2, "S")
-        if caller and IsExternalAPISource(caller.source) then
-            Debug("API", "api=VChat.AddBlacklist", "mod_source=" .. caller.source, "class=" .. class, "result=added")
+        if GetConVar("vchat_debug"):GetBool() then
+            local caller = debug.getinfo(2, "S")
+            if caller and IsExternalAPISource(caller.source) then
+                Debug("API", "api=VChat.AddBlacklist", "mod_source=" .. caller.source, "class=" .. class, "result=added")
+            end
         end
         return true
     end
 
     function VChat.RemoveBlacklist(class)
         if not isstring(class) then
-            local caller = debug.getinfo(2, "S")
-            if caller and IsExternalAPISource(caller.source) then
-                Debug("API", "api=VChat.RemoveBlacklist", "mod_source=" .. caller.source, "result=rejected", "reason=class must be a string")
+            if GetConVar("vchat_debug"):GetBool() then
+                local caller = debug.getinfo(2, "S")
+                if caller and IsExternalAPISource(caller.source) then
+                    Debug("API", "api=VChat.RemoveBlacklist", "mod_source=" .. caller.source, "result=rejected", "reason=class must be a string")
+                end
             end
             return false
         end
         VChat.NPCBlacklist[class] = nil
-        local caller = debug.getinfo(2, "S")
-        if caller and IsExternalAPISource(caller.source) then
-            Debug("API", "api=VChat.RemoveBlacklist", "mod_source=" .. caller.source, "class=" .. class, "result=removed")
+        if GetConVar("vchat_debug"):GetBool() then
+            local caller = debug.getinfo(2, "S")
+            if caller and IsExternalAPISource(caller.source) then
+                Debug("API", "api=VChat.RemoveBlacklist", "mod_source=" .. caller.source, "class=" .. class, "result=removed")
+            end
         end
         return true
     end
@@ -538,7 +613,8 @@ if SERVER then
         if not GetConVar("vchat_volume_scaling"):GetBool() then return baseRange end
         if not isnumber(volume) then return baseRange end
         local factor = GetConVar("vchat_volume_scale_factor"):GetFloat()
-        local multiplier = math.Clamp(volume * factor, 0.1, factor)
+        local normalizedVolume = math.Clamp(volume, 0, 1)
+        local multiplier = math.Clamp(math.pow(normalizedVolume, 0.75) * factor, 0.1, factor)
         if isnumber(minimumMultiplier) then
             multiplier = math.max(multiplier, math.Clamp(minimumMultiplier, 0.1, 1))
         end
@@ -570,7 +646,7 @@ if SERVER then
             local muffleFactor = GetConVar("vchat_wall_muffle_factor"):GetFloat()
             if voiceOnly and isnumber(volume) then
                 local loudness = math.Clamp(volume, 0, 1)
-                muffleFactor = muffleFactor + (1 - muffleFactor) * loudness * 0.6
+                muffleFactor = muffleFactor + (1 - muffleFactor) * loudness * 0.25
             end
             range = range * math.pow(muffleFactor, wallCount)
         end
@@ -628,12 +704,18 @@ if SERVER then
     end
 
     function VChat.ReactAllNPCs(sourcePos, baseRange, sourceEnt, soundType, volume, voiceOnly, sourceId, emittedSound)
-        local caller = debug.getinfo(2, "S")
-        if caller and IsExternalAPISource(caller.source) then
-            local rangeLabel = isnumber(baseRange) and (math.Round(baseRange) .. "u") or tostring(baseRange)
-            Debug("API", "api=VChat.ReactAllNPCs", "mod_source=" .. caller.source, "sound=" .. (soundType or "custom"), "base_range=" .. rangeLabel)
+        if not GetConVar("vchat_enabled"):GetBool() then return 0 end
+        if GetConVar("vchat_debug"):GetBool() then
+            local caller = debug.getinfo(2, "S")
+            if caller and IsExternalAPISource(caller.source) then
+                local key = "VChat.ReactAllNPCs|" .. caller.source
+                if not loggedExternalAPICalls[key] then
+                    loggedExternalAPICalls[key] = true
+                    local rangeLabel = isnumber(baseRange) and (math.Round(baseRange) .. "u") or tostring(baseRange)
+                    Debug("API", "api=VChat.ReactAllNPCs", "mod_source=" .. caller.source, "sound=" .. (soundType or "custom"), "base_range=" .. rangeLabel)
+                end
+            end
         end
-        if voiceOnly and not GetConVar("vchat_enabled"):GetBool() then return 0 end
         if GetConVar("ai_disabled"):GetBool() then return 0 end
         if GetConVar("ai_ignoreplayers"):GetBool() then
             if IsValid(sourceEnt) and sourceEnt:IsPlayer() then return 0 end
@@ -678,19 +760,22 @@ if SERVER then
         if doDrG and DrGBase then
             for _, bot in ipairs(DrGBase.GetNextbots()) do
                 if not IsValid(bot) then continue end
-                local effRange = VChat.SoundFeatures.GetEffectiveRange(baseRange, volume, sourcePos, bot:GetPos(), sourceEnt, voiceOnly)
-                if GetDistance(bot:GetPos(), sourcePos) > effRange then continue end
                 if IsValid(bot:GetPossessor()) then continue end
                 if VChat.NPCBlacklist[bot:GetClass()] then continue end
+                local cooldown = VChat.GetNPCReactCooldown(bot:GetClass())
+                if cooldown > 0 and bot.VChat_NextReact and CurTime() < bot.VChat_NextReact then continue end
+                if VChat.IsNPCOnSourceCooldown(bot, sourceId) then continue end
+
+                local botPos = bot:GetPos()
+                if not IsWithinRange(botPos, sourcePos, searchRange) then continue end
+                local effRange = VChat.SoundFeatures.GetEffectiveRange(baseRange, volume, sourcePos, botPos, sourceEnt, voiceOnly)
+                if not IsWithinRange(botPos, sourcePos, effRange) then continue end
                 if not CheckLOS(bot, sourcePos) then continue end
 
                 local preResult = hook.Run("VChat_PreNPCReact", bot, sourceEnt, soundType, sourcePos, effRange)
                 DebugExternalHook("VChat_PreNPCReact", "npc=" .. bot:GetClass(), "result=" .. tostring(preResult))
                 if preResult == false then continue end
 
-                local cooldown = VChat.GetNPCReactCooldown(bot:GetClass())
-                if cooldown > 0 and bot.VChat_NextReact and CurTime() < bot.VChat_NextReact then continue end
-                if VChat.IsNPCOnSourceCooldown(bot, sourceId) then continue end
                 bot.VChat_NextReact = CurTime() + cooldown
 
                 bot.VChat_LastHeardSource = sourceEnt
@@ -721,20 +806,22 @@ if SERVER then
                 if ent == sourceEnt then continue end
                 if ent:IsFlagSet(FL_NOTARGET) then continue end
 
-                local effRange = VChat.SoundFeatures.GetEffectiveRange(baseRange, volume, sourcePos, ent:GetPos(), sourceEnt, voiceOnly)
-
                 if doVJ and ent.IsVJBaseSNPC then
-                    if GetDistance(ent:GetPos(), sourcePos) <= effRange then
+                    if VChat.NPCBlacklist[ent:GetClass()] then continue end
+                    local cooldown = VChat.GetNPCReactCooldown(ent:GetClass())
+                    if cooldown > 0 and ent.VChat_NextReact and CurTime() < ent.VChat_NextReact then continue end
+                    if VChat.IsNPCOnSourceCooldown(ent, sourceId) then continue end
+
+                    local entPos = ent:GetPos()
+                    if not IsWithinRange(entPos, sourcePos, searchRange) then continue end
+                    local effRange = VChat.SoundFeatures.GetEffectiveRange(baseRange, volume, sourcePos, entPos, sourceEnt, voiceOnly)
+                    if IsWithinRange(entPos, sourcePos, effRange) then
                         if not CheckLOS(ent, sourcePos) then continue end
-                        if VChat.NPCBlacklist[ent:GetClass()] then continue end
 
                         local preResult = hook.Run("VChat_PreNPCReact", ent, sourceEnt, soundType, sourcePos, effRange)
                         DebugExternalHook("VChat_PreNPCReact", "npc=" .. ent:GetClass(), "result=" .. tostring(preResult))
                         if preResult == false then continue end
 
-                        local cooldown = VChat.GetNPCReactCooldown(ent:GetClass())
-                        if cooldown > 0 and ent.VChat_NextReact and CurTime() < ent.VChat_NextReact then continue end
-                        if VChat.IsNPCOnSourceCooldown(ent, sourceId) then continue end
                         ent.VChat_NextReact = CurTime() + cooldown
 
                         ent.VChat_LastHeardSource = sourceEnt
@@ -751,7 +838,12 @@ if SERVER then
                             end
                             continue
                         elseif behavior and istable(behavior) then
-                            Debug("API", "api=SoundBehaviors[" .. ent:GetClass() .. "]", "mod_source=external behavior table", "kind=table", "sound=" .. (soundType or "unknown"), "result=applied")
+                            local apiName = "SoundBehaviors[" .. ent:GetClass() .. "]"
+                            local apiKey = apiName .. "|external behavior table"
+                            if GetConVar("vchat_debug"):GetBool() and not loggedExternalAPICalls[apiKey] then
+                                loggedExternalAPICalls[apiKey] = true
+                                Debug("API", "api=" .. apiName, "mod_source=external behavior table", "kind=table", "sound=" .. (soundType or "unknown"), "result=applied")
+                            end
                             if behavior.schedule then ent:SetSchedule(behavior.schedule) end
                             if behavior.vjInvestigate ~= false then
                                 local npcData = ent:GetTable()
@@ -788,17 +880,21 @@ if SERVER then
                         VChat.SetNPCSourceCooldown(ent, sourceId, GetConVar("vchat_mediaplayer_cooldown"):GetFloat())
                     end
                 elseif doDefault and ent:IsNPC() then
-                    if GetDistance(ent:GetPos(), sourcePos) <= effRange then
+                    if VChat.NPCBlacklist[ent:GetClass()] then continue end
+                    local cooldown = VChat.GetNPCReactCooldown(ent:GetClass())
+                    if cooldown > 0 and ent.VChat_NextReact and CurTime() < ent.VChat_NextReact then continue end
+                    if VChat.IsNPCOnSourceCooldown(ent, sourceId) then continue end
+
+                    local entPos = ent:GetPos()
+                    if not IsWithinRange(entPos, sourcePos, searchRange) then continue end
+                    local effRange = VChat.SoundFeatures.GetEffectiveRange(baseRange, volume, sourcePos, entPos, sourceEnt, voiceOnly)
+                    if IsWithinRange(entPos, sourcePos, effRange) then
                         if not CheckLOS(ent, sourcePos) then continue end
-                        if VChat.NPCBlacklist[ent:GetClass()] then continue end
 
                         local preResult = hook.Run("VChat_PreNPCReact", ent, sourceEnt, soundType, sourcePos, effRange)
                         DebugExternalHook("VChat_PreNPCReact", "npc=" .. ent:GetClass(), "result=" .. tostring(preResult))
                         if preResult == false then continue end
 
-                        local cooldown = VChat.GetNPCReactCooldown(ent:GetClass())
-                        if cooldown > 0 and ent.VChat_NextReact and CurTime() < ent.VChat_NextReact then continue end
-                        if VChat.IsNPCOnSourceCooldown(ent, sourceId) then continue end
                         ent.VChat_NextReact = CurTime() + cooldown
 
                         ent.VChat_LastHeardSource = sourceEnt
@@ -815,7 +911,12 @@ if SERVER then
                             end
                             continue
                         elseif behavior and istable(behavior) then
-                            Debug("API", "api=SoundBehaviors[" .. ent:GetClass() .. "]", "mod_source=external behavior table", "kind=table", "sound=" .. (soundType or "unknown"), "result=applied")
+                            local apiName = "SoundBehaviors[" .. ent:GetClass() .. "]"
+                            local apiKey = apiName .. "|external behavior table"
+                            if GetConVar("vchat_debug"):GetBool() and not loggedExternalAPICalls[apiKey] then
+                                loggedExternalAPICalls[apiKey] = true
+                                Debug("API", "api=" .. apiName, "mod_source=external behavior table", "kind=table", "sound=" .. (soundType or "unknown"), "result=applied")
+                            end
                             if behavior.schedule then ent:SetSchedule(behavior.schedule) end
                             if IsValid(sourceEnt) and sourceEnt:IsPlayer() and behavior.updateEnemyMemory ~= false then
                                 ent:UpdateEnemyMemory(sourceEnt, sourcePos)
@@ -849,9 +950,6 @@ if SERVER then
                 end
             end
         end
-
-        local outcome = reactedCount > 0 and "reacted" or "no NPC reacted"
-        Debug("DETECTION", "source=" .. sourceName, "sound=" .. (soundType or "custom"), "base_range=" .. math.Round(baseRange) .. "u", "npcs_reacted=" .. reactedCount, "result=" .. outcome)
 
         hook.Run("VChat_OnNPCReact", sourcePos, baseRange, sourceEnt, soundType, volume, reactedCount)
         DebugExternalHook("VChat_OnNPCReact", "sound=" .. (soundType or "custom"), "npcs_reacted=" .. reactedCount, "result=dispatched")
@@ -896,6 +994,7 @@ if SERVER then
     end
 
     local function OnPropCollide(ent, data)
+        if not GetConVar("vchat_enabled"):GetBool() then return end
         if not GetConVar("vchat_props"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -908,8 +1007,18 @@ if SERVER then
         VChat.ReactAllNPCs(data.HitPos, range, ent, "prop collision", nil, false)
     end
 
-    for _, ent in ipairs(ents.FindByClass("prop_physics")) do
-        if IsValid(ent) then ent:AddCallback("PhysicsCollide", OnPropCollide) end
+    local propCollisionCallbackIds = setmetatable({}, {__mode = "k"})
+
+    local function AddPropCollisionCallback(ent)
+        if not IsValid(ent) or propCollisionCallbackIds[ent] then return end
+        propCollisionCallbackIds[ent] = ent:AddCallback("PhysicsCollide", OnPropCollide)
+    end
+
+    local function RemovePropCollisionCallback(ent)
+        local callbackId = propCollisionCallbackIds[ent]
+        if not IsValid(ent) or not callbackId then return end
+        ent:RemoveCallback("PhysicsCollide", callbackId)
+        propCollisionCallbackIds[ent] = nil
     end
 
     net.Receive("VChatVoiceState", function(len, ply)
@@ -969,16 +1078,45 @@ if SERVER then
         end
     end)
 
-    hook.Add("OnEntityCreated", "VChatPropHear", function(ent)
+    local function OnVChatPropCreated(ent)
         if ent:GetClass() == "prop_physics" then
             timer.Simple(0, function()
-                if IsValid(ent) then ent:AddCallback("PhysicsCollide", OnPropCollide) end
+                if IsValid(ent) and GetConVar("vchat_enabled"):GetBool() and GetConVar("vchat_props"):GetBool() then
+                    AddPropCollisionCallback(ent)
+                end
             end)
         end
-    end)
+    end
+
+    local function BindOptionalHook(feature, event, identifier, callback, onStateChanged)
+        local featureConVar = GetConVar(feature)
+        local function update()
+            local active = GetConVar("vchat_enabled"):GetBool() and featureConVar:GetBool()
+            if active then
+                hook.Add(event, identifier, callback)
+            else
+                hook.Remove(event, identifier)
+            end
+            if onStateChanged then onStateChanged(active) end
+        end
+        cvars.AddChangeCallback("vchat_enabled", update, identifier .. "MasterToggle")
+        cvars.AddChangeCallback(feature, update, identifier .. "FeatureToggle")
+        update()
+    end
+
+    local function UpdatePropCallbacks(active)
+        for _, ent in ipairs(ents.FindByClass("prop_physics")) do
+            if active then
+                AddPropCollisionCallback(ent)
+            else
+                RemovePropCollisionCallback(ent)
+            end
+        end
+    end
+    BindOptionalHook("vchat_props", "OnEntityCreated", "VChatPropHear", OnVChatPropCreated, UpdatePropCallbacks)
 
     local doorClasses = { ["prop_door_rotating"] = true, ["func_door"] = true, ["func_door_rotating"] = true }
-    hook.Add("AcceptInput", "VChatDoorHear", function(ent, input, activator, caller)
+    local function OnVChatDoorInput(ent, input, activator, caller)
         if not GetConVar("vchat_doors"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -989,19 +1127,32 @@ if SERVER then
 
         local range = GetConVar("vchat_doors_range"):GetFloat()
         VChat.ReactAllNPCs(ent:GetPos(), range, ent, "door " .. string.lower(input), nil, false)
-    end)
+    end
+    BindOptionalHook("vchat_doors", "AcceptInput", "VChatDoorHear", OnVChatDoorInput)
 
-    hook.Add("PlayerFootstep", "VChatFootstepHear", function(ply, pos)
-        if not GetConVar("vchat_footsteps"):GetBool() then return end
+    local function OnVChatFootstep(ply, pos)
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
+        if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return end
         if ply:Crouching() then return end
 
         local range = GetConVar("vchat_footsteps_range"):GetFloat()
         VChat.ReactAllNPCs(pos, range, ply, "footstep", nil, false)
-    end)
+    end
 
-    hook.Add("EntityFireBullets", "VChatGunshotHear", function(ent, data)
+    local function UpdateFootstepHook()
+        if GetConVar("vchat_enabled"):GetBool() and GetConVar("vchat_footsteps"):GetBool() then
+            hook.Add("PlayerFootstep", "VChatFootstepHear", OnVChatFootstep)
+        else
+            hook.Remove("PlayerFootstep", "VChatFootstepHear")
+        end
+    end
+
+    cvars.AddChangeCallback("vchat_enabled", UpdateFootstepHook, "VChatFootstepEnable")
+    cvars.AddChangeCallback("vchat_footsteps", UpdateFootstepHook, "VChatFootstepEnable")
+    UpdateFootstepHook()
+
+    local function OnVChatGunshot(ent, data)
         if not GetConVar("vchat_gunshots"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -1009,9 +1160,10 @@ if SERVER then
 
         local range = GetConVar("vchat_gunshots_range"):GetFloat()
         VChat.ReactAllNPCs(data.Src, range, ent, "gunshot", nil, false)
-    end)
+    end
+    BindOptionalHook("vchat_gunshots", "EntityFireBullets", "VChatGunshotHear", OnVChatGunshot)
 
-    hook.Add("EntityEmitSound", "VChatExplosionHear", function(data)
+    local function OnVChatExplosionSound(data)
         if not GetConVar("vchat_explosions"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -1021,9 +1173,10 @@ if SERVER then
         local pos = data.Pos or (IsValid(data.Entity) and data.Entity:GetPos()) or Vector(0, 0, 0)
         local ent = IsValid(data.Entity) and data.Entity or game.GetWorld()
         VChat.ReactAllNPCs(pos, range, ent, "explosion", nil, false, nil, data)
-    end)
+    end
+    BindOptionalHook("vchat_explosions", "EntityEmitSound", "VChatExplosionHear", OnVChatExplosionSound)
 
-    hook.Add("PlayerSay", "VChatTextChatHear", function(ply, text, teamChat)
+    local function OnVChatPlayerSay(ply, text, teamChat)
         if not GetConVar("vchat_textchat"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -1036,11 +1189,12 @@ if SERVER then
 
         Debug("EVENT", "source=" .. ply:Nick(), "sound=text chat", "range=" .. math.Round(range) .. "u")
         VChat.ReactAllNPCs(pos, range, ply, "text chat", nil, false)
-    end)
+    end
+    BindOptionalHook("vchat_textchat", "PlayerSay", "VChatTextChatHear", OnVChatPlayerSay)
 
     local flashlightSoundCooldowns = {}
 
-    hook.Add("EntityEmitSound", "VChatFlashlightSoundHear", function(data)
+    local function OnVChatFlashlightSound(data)
         if not GetConVar("vchat_flashlight_sound"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -1063,14 +1217,18 @@ if SERVER then
 
         Debug("EVENT", "source=" .. ent:Nick(), "sound=flashlight toggle", "event=" .. soundName, "range=" .. math.Round(range) .. "u")
         VChat.ReactAllNPCs(pos, range, ent, "flashlight toggle", nil, false, nil, data)
-    end)
+    end
+    BindOptionalHook("vchat_flashlight_sound", "EntityEmitSound", "VChatFlashlightSoundHear", OnVChatFlashlightSound)
 
     local emoteCooldowns = {}
     local EMOTE_COOLDOWN = 1.5
     local detourWorking = false
     local emoteStates = {}
+    local detourOriginal
+    local detourWrapper
 
     local function OnEmoteStart(ply, emoteName)
+        if not GetConVar("vchat_enabled"):GetBool() then return end
         if not GetConVar("vchat_emotes"):GetBool() then return end
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
@@ -1100,7 +1258,7 @@ if SERVER then
         VChat.ReactAllNPCs(pos, range, ply, "emote: " .. emoteStr, nil, false)
     end
 
-    hook.Add("ActMod_CStart", "VChatEmoteDetectCStart", function(tbl, tAb, Oall, GHold)
+    local function OnActModEmote(tbl, tAb, Oall, GHold)
         if not istable(tbl) then return end
         if tbl[1] == "Player" and IsValid(tbl[2]) and tbl[2]:IsPlayer() then
             OnEmoteStart(tbl[2], tAb and tAb[1])
@@ -1117,25 +1275,49 @@ if SERVER then
                 end
             end
         end
-    end)
+    end
 
-    timer.Simple(5, function()
-        if A_AM and A_AM.ActMod and A_AM.ActMod.StartAniAct then
-            local origStartAniAct = A_AM.ActMod.StartAniAct
-            A_AM.ActMod.StartAniAct = function(self, ply, TStr, ...)
-                local ret = {origStartAniAct(self, ply, TStr, ...)}
-                if IsValid(ply) and ply:IsPlayer() then
-                    OnEmoteStart(ply, TStr)
-                end
-                return unpack(ret)
-            end
-            detourWorking = true
+    local function UpdateActModHook()
+        if GetConVar("vchat_enabled"):GetBool() and GetConVar("vchat_emotes"):GetBool() then
+            hook.Add("ActMod_CStart", "VChatEmoteDetectCStart", OnActModEmote)
+        else
+            hook.Remove("ActMod_CStart", "VChatEmoteDetectCStart")
         end
-    end)
+    end
 
-    timer.Create("VChatEmoteCheck", 0.5, 0, function()
-        if detourWorking then return end
-        if not GetConVar("vchat_emotes"):GetBool() then return end
+    local function UpdateActModDetour()
+        local actMod = A_AM and A_AM.ActMod
+        local enabled = GetConVar("vchat_enabled"):GetBool() and GetConVar("vchat_emotes"):GetBool()
+
+        if not enabled then
+            if detourWrapper and actMod and actMod.StartAniAct == detourWrapper then
+                actMod.StartAniAct = detourOriginal
+            end
+            detourOriginal = nil
+            detourWrapper = nil
+            detourWorking = false
+            return
+        end
+
+        if detourWorking or not actMod or not isfunction(actMod.StartAniAct) then return end
+
+        local original = actMod.StartAniAct
+        detourOriginal = original
+        detourWrapper = function(self, ply, TStr, ...)
+            local ret = {original(self, ply, TStr, ...)}
+            if IsValid(ply) and ply:IsPlayer() then
+                OnEmoteStart(ply, TStr)
+            end
+            return unpack(ret)
+        end
+        actMod.StartAniAct = detourWrapper
+        detourWorking = true
+        timer.Remove("VChatEmoteCheck")
+    end
+
+    timer.Simple(5, UpdateActModDetour)
+
+    local function CheckVChatEmotes()
         if GetConVar("ai_disabled"):GetBool() then return end
         if GetConVar("ai_ignoreplayers"):GetBool() then return end
 
@@ -1157,7 +1339,25 @@ if SERVER then
 
             emoteStates[uid] = isActing
         end
-    end)
+    end
+
+    local function UpdateEmoteTimer()
+        if detourWorking or not GetConVar("vchat_enabled"):GetBool() or not GetConVar("vchat_emotes"):GetBool() then
+            timer.Remove("VChatEmoteCheck")
+            return
+        end
+        timer.Create("VChatEmoteCheck", 0.5, 0, CheckVChatEmotes)
+    end
+
+    local function UpdateEmoteDetection()
+        UpdateActModDetour()
+        UpdateActModHook()
+        UpdateEmoteTimer()
+    end
+
+    cvars.AddChangeCallback("vchat_enabled", UpdateEmoteDetection, "VChatEmoteEnable")
+    cvars.AddChangeCallback("vchat_emotes", UpdateEmoteDetection, "VChatEmoteEnable")
+    UpdateEmoteDetection()
 
     hook.Add("PlayerDisconnected", "VChatEmoteCleanup", function(ply)
         emoteCooldowns[ply:UserID()] = nil
@@ -1170,7 +1370,6 @@ if SERVER then
         table.Empty(emoteStates)
     end)
 
-    local mpReactCooldowns = {}
     local cv_mp_enabled = GetConVar("vchat_mediaplayer")
     local cv_mp_range = GetConVar("vchat_mediaplayer_range")
 
@@ -1195,15 +1394,29 @@ if SERVER then
         return media ~= nil
     end
 
-    local function GetMediaPlayerPos(mp)
-        if mp.GetEntity then
-            local ent = mp:GetEntity()
-            if IsValid(ent) then
-                return ent:GetPos(), ent
-            end
+    local function GetMediaPlayerTV(mp)
+        if not mp or not isfunction(mp.GetEntity) then return nil end
+        local ent = mp:GetEntity()
+        if not IsValid(ent) or ent:IsPlayer() or ent:IsNPC() then return nil end
+        if not ent.IsMediaPlayerEntity and ent:GetClass() ~= "mediaplayer_tv" and ent:GetClass() ~= "mediaplayer_tv2" and ent:GetClass() ~= "mediaplayer_tv3" then
+            return nil
         end
-        if mp.GetPos then return mp:GetPos(), nil end
-        return nil, nil
+        return ent
+    end
+
+    local function GetMediaPlayerTVApproachPos(ent)
+        local forward = ent:GetForward()
+        if isfunction(ent.GetMediaPlayerPosition) then
+            local _, _, _, screenAngle = ent:GetMediaPlayerPosition()
+            if isangle(screenAngle) then forward = screenAngle:Forward() end
+        end
+        forward.z = 0
+        if forward:LengthSqr() > 0 then
+            forward:Normalize()
+        else
+            forward = ent:GetForward()
+        end
+        return ent:GetPos() - forward * 64
     end
 	
     local function GetMediaPlayerOwner(mp, ent)
@@ -1217,118 +1430,120 @@ if SERVER then
         return nil
     end
 
-    local function MediaPlayerHasListeners(mp)
-        if mp.GetListeners then
-            local listeners = mp:GetListeners()
-            return istable(listeners) and table.Count(listeners) > 0
+    local mediaPlayerStateListeners = setmetatable({}, {__mode = "k"})
+
+    local function ReactToMediaPlayerTV(mp, status)
+        if not GetConVar("vchat_enabled"):GetBool() or not cv_mp_enabled:GetBool() then return 0 end
+        if GetConVar("ai_disabled"):GetBool() then return 0 end
+        if not IsMediaPlayerPlaying(mp) then return 0 end
+
+        local ent = GetMediaPlayerTV(mp)
+        if not IsValid(ent) then return 0 end
+        local id = mp.id or (mp.GetId and mp:GetId())
+        local pos = GetMediaPlayerTVApproachPos(ent)
+        local owner = GetMediaPlayerOwner(mp, ent)
+        local sourceName = IsValid(owner) and owner:IsPlayer() and (owner:Nick() .. "'s Media Player TV") or "Media Player TV"
+        local reactedCount = VChat.ReactAllNPCs(pos, cv_mp_range:GetFloat(), ent, "media player", nil, false, id)
+
+        if reactedCount > 0 then
+            Debug("MEDIA", "source=" .. sourceName, "status=" .. (status or "playing"), "npcs_reacted=" .. reactedCount)
         end
-        if mp._listeners then
-            return table.Count(mp._listeners) > 0
-        end
-        return true
+        return reactedCount
     end
 
-    local function CheckMediaPlayers()
-        if not cv_mp_enabled:GetBool() then return end
-        if GetConVar("ai_disabled"):GetBool() then return end
+    local function StartMediaPlayerCheck()
+        if not GetConVar("vchat_enabled"):GetBool() or not cv_mp_enabled:GetBool() or GetConVar("ai_disabled"):GetBool() then return end
+        if not timer.Exists("VChatMediaPlayerCheck") then
+            timer.Create("VChatMediaPlayerCheck", 1, 0, function()
+                if not GetConVar("vchat_enabled"):GetBool() or not cv_mp_enabled:GetBool() or GetConVar("ai_disabled"):GetBool() then
+                    timer.Remove("VChatMediaPlayerCheck")
+                    return
+                end
+                if not MediaPlayer or not MediaPlayer.List then
+                    timer.Remove("VChatMediaPlayerCheck")
+                    return
+                end
+
+                local anyActive = false
+                for _, mp in pairs(MediaPlayer.List) do
+                    if not mp or not IsMediaPlayerPlaying(mp) or not IsValid(GetMediaPlayerTV(mp)) then continue end
+                    anyActive = true
+                    ReactToMediaPlayerTV(mp, "playing")
+                end
+                if not anyActive then timer.Remove("VChatMediaPlayerCheck") end
+            end)
+        else
+            timer.Start("VChatMediaPlayerCheck")
+        end
+    end
+
+    local function WatchMediaPlayer(mp)
+        if not mp or mediaPlayerStateListeners[mp] then return end
+        local eventName = MediaPlayer and MediaPlayer.EVENTS and MediaPlayer.EVENTS.PLAYER_STATE_CHANGED
+        if not eventName or not isfunction(mp.on) then return end
+
+        local function OnStateChanged(newState)
+            if not GetConVar("vchat_enabled"):GetBool() or not cv_mp_enabled:GetBool() then return end
+            if newState == MP_STATE_PLAYING then
+                ReactToMediaPlayerTV(mp, "started")
+                StartMediaPlayerCheck()
+            else
+                local id = mp.id or (mp.GetId and mp:GetId())
+                if id then ClearNPCCooldownsForTV(id) end
+            end
+        end
+
+        mp:on(eventName, OnStateChanged)
+        mediaPlayerStateListeners[mp] = OnStateChanged
+    end
+
+    local function TrackMediaPlayer(mp)
+        WatchMediaPlayer(mp)
+        if IsMediaPlayerPlaying(mp) then
+            ReactToMediaPlayerTV(mp, "playing")
+            StartMediaPlayerCheck()
+        end
+    end
+
+    local function UpdateMediaPlayerWatchers(active)
+        if not active then
+            timer.Remove("VChatMediaPlayerCheck")
+            local eventName = MediaPlayer and MediaPlayer.EVENTS and MediaPlayer.EVENTS.PLAYER_STATE_CHANGED
+            if eventName then
+                for mp, callback in pairs(mediaPlayerStateListeners) do
+                    if isfunction(mp.off) then mp:off(eventName, callback) end
+                    mediaPlayerStateListeners[mp] = nil
+                end
+            end
+            return
+        end
         if not MediaPlayer or not MediaPlayer.List then return end
-
-        local range = cv_mp_range:GetFloat()
-        local now = CurTime()
-        local anyActive = false
-
-        
-        for id, mp in pairs(MediaPlayer.List) do
-            if not mp then
-                VChat.MP_LastPlayingState[id] = nil
-                continue
-            end
-
-            local wasPlaying = VChat.MP_LastPlayingState[id]
-            local isPlaying = IsMediaPlayerPlaying(mp)
-
-            
-            if wasPlaying and not isPlaying then
-                ClearNPCCooldownsForTV(id)
-            end
-
-            VChat.MP_LastPlayingState[id] = isPlaying
-        end
-
-        for id, mp in pairs(MediaPlayer.List) do
-            if not mp then continue end
-            if not IsMediaPlayerPlaying(mp) then continue end
-            if not MediaPlayerHasListeners(mp) then continue end
-
-            anyActive = true
-
-            local cooldown = mpReactCooldowns[id] or 0
-            if now < cooldown then continue end
-
-            local pos, ent = GetMediaPlayerPos(mp)
-            if not pos then continue end
-
-            mpReactCooldowns[id] = now + 4
-
-            local owner = GetMediaPlayerOwner(mp, ent)
-            if IsValid(owner) and owner:IsPlayer() and not owner:Alive() then continue end
-            local sourceName = IsValid(owner) and owner:IsPlayer() and (owner:Nick() .. "'s Media Player") or "Media Player"
-
-            local reactedCount = VChat.ReactAllNPCs(pos, range, ent, "media player", nil, false, id)
-            if reactedCount > 0 then
-                Debug("MEDIA", "source=" .. sourceName, "status=playing", "npcs_reacted=" .. reactedCount)
-            end
-        end
-
-        if not anyActive then
-            timer.Stop("VChatMediaPlayerCheck")
+        for _, mp in pairs(MediaPlayer.List) do
+            TrackMediaPlayer(mp)
         end
     end
 
-    hook.Add("MediaPlayerAddListener", "VChatMPStartTimer", function(mp, ply)
-        if not cv_mp_enabled:GetBool() then return end
-        if not timer.Exists("VChatMediaPlayerCheck") then
-            timer.Create("VChatMediaPlayerCheck", 2, 0, CheckMediaPlayers)
+    BindOptionalHook("vchat_mediaplayer", "MediaPlayerAddListener", "VChatMPStartTimer", function(mp)
+        TrackMediaPlayer(mp)
+    end, UpdateMediaPlayerWatchers)
+
+    BindOptionalHook("vchat_mediaplayer", "PostMediaPlayerMediaRequest", "VChatMPStartTimer2", function(mp)
+        TrackMediaPlayer(mp)
+    end, UpdateMediaPlayerWatchers)
+
+    cvars.AddChangeCallback("ai_disabled", function(_, _, newValue)
+        if tonumber(newValue) == 0 and GetConVar("vchat_enabled"):GetBool() and cv_mp_enabled:GetBool() then
+            UpdateMediaPlayerWatchers(true)
         else
-            timer.Start("VChatMediaPlayerCheck")
+            timer.Remove("VChatMediaPlayerCheck")
         end
-    end)
-
-    hook.Add("PostMediaPlayerMediaRequest", "VChatMPStartTimer2", function(mp, media, ply)
-        if not cv_mp_enabled:GetBool() then return end
-        if not timer.Exists("VChatMediaPlayerCheck") then
-            timer.Create("VChatMediaPlayerCheck", 2, 0, CheckMediaPlayers)
-        else
-            timer.Start("VChatMediaPlayerCheck")
-        end
-
-        timer.Simple(1, function()
-            if not mp or not IsMediaPlayerPlaying(mp) then return end
-            local pos, ent = GetMediaPlayerPos(mp)
-            if not pos then return end
-
-            local id = mp.id or (mp.GetId and mp:GetId()) or 0
-            mpReactCooldowns[id] = CurTime() + 4
-
-            local owner = GetMediaPlayerOwner(mp, ent)
-            if IsValid(owner) and owner:IsPlayer() and not owner:Alive() then return end
-            local sourceName = IsValid(owner) and owner:IsPlayer() and (owner:Nick() .. "'s Media Player") or "Media Player"
-
-            local reactedCount = VChat.ReactAllNPCs(pos, cv_mp_range:GetFloat(), ent, "media player", nil, false, id)
-            if reactedCount > 0 then
-                Debug("MEDIA", "source=" .. sourceName, "status=started", "npcs_reacted=" .. reactedCount)
-            end
-        end)
-    end)
+    end, "VChatMediaPlayerAIDisabled")
 
     
     hook.Add("PostCleanupMap", "VChatMediaPlayerCleanup", function()
-      table.Empty(mpReactCooldowns)
       table.Empty(VChat.NPCSourceCooldowns)
       table.Empty(VChat.MP_LastPlayingState)
-       if timer.Exists("VChatMediaPlayerCheck") then
-            timer.Remove("VChatMediaPlayerCheck")
-       end
+      timer.Remove("VChatMediaPlayerCheck")
     end)
 
     print("[VChat] Loaded")
