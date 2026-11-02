@@ -42,11 +42,13 @@ You can also make your own version of VChat. If you make a useful fix or improve
 
 ## For Developers
 
-VChat has an API for adding custom NPC reactions, changing sound ranges, and responding to NPC reactions. Add your code in a separate addon; you do not need to edit VChat's main file.
+VChat has a server API for custom NPC reactions sound range changes and reaction hooks
+
+Put your code in a separate server addon so you do not need to edit VChat files
 
 ### Custom NPC Sound Behaviors
 
-Set a behavior for an NPC class in `VChat.SoundBehaviors`:
+Set a function for an NPC class in `VChat.SoundBehaviors` VChat calls it after range line of sight blacklist and cooldown checks
 
 ```lua
 VChat.SoundBehaviors["my_custom_npc"] = function(npc, source, soundType, soundPos)
@@ -55,17 +57,17 @@ VChat.SoundBehaviors["my_custom_npc"] = function(npc, source, soundType, soundPo
 end
 ```
 
-Return `false` from the function to report that the behavior did not handle the sound.
+Return `false` if your behavior did not handle the sound VChat will not count that NPC as reacted
 
 ### NPC Blacklist
 
-Prevent an NPC class from reacting:
+Prevent an NPC class from reacting
 
 ```lua
 VChat.AddBlacklist("my_npc_class")
 ```
 
-Allow it to react again:
+Allow it to react again
 
 ```lua
 VChat.RemoveBlacklist("my_npc_class")
@@ -73,23 +75,23 @@ VChat.RemoveBlacklist("my_npc_class")
 
 ### Player Immunity
 
-VChat can skip players listed in `VChat.PlayerImmunity`:
+VChat skips players listed in `VChat.PlayerImmunity`
 
 ```lua
 VChat.PlayerImmunity[ply:SteamID64()] = true
 ```
 
-Remove the entry to restore detection for that player:
+Remove the entry to restore detection for that player
 
 ```lua
 VChat.PlayerImmunity[ply:SteamID64()] = nil
 ```
 
-VChat also has settings and checks for admin immunity, `FL_NOTARGET`, and muted players.
+VChat also checks admin immunity `FL_NOTARGET` and muted player systems
 
 ### Custom Sound Range
 
-Add a function to `VChat.SoundFeatures.Custom` to adjust the range calculated for each listener. Return the range that VChat should use next:
+Add a function to `VChat.SoundFeatures.Custom` to change the range for each nearby NPC candidate Return the range VChat should use
 
 ```lua
 VChat.SoundFeatures.Custom["my_addon"] = function(
@@ -103,11 +105,11 @@ VChat.SoundFeatures.Custom["my_addon"] = function(
 end
 ```
 
-This example halves the range.
+This example halves the range
 
 ### NPC Reaction Hooks
 
-Use `VChat_PreNPCReact` to stop one NPC from reacting. Returning `false` prevents that NPC's reaction:
+`VChat_PreNPCReact` runs for each NPC that passes range line of sight blacklist and cooldown checks Return `false` to stop that NPC reacting
 
 ```lua
 hook.Add("VChat_PreNPCReact", "MyAddon_PreventReaction", function(
@@ -123,7 +125,7 @@ hook.Add("VChat_PreNPCReact", "MyAddon_PreventReaction", function(
 end)
 ```
 
-Use `VChat_OnNPCReact` to find out when VChat finishes checking a sound:
+`VChat_OnNPCReact` runs once after VChat checks a sound The reacted count may be zero
 
 ```lua
 hook.Add("VChat_OnNPCReact", "MyAddon_NPCReact", function(
@@ -140,17 +142,17 @@ end)
 
 ### NPC Cooldowns
 
-Set a reaction cooldown in seconds for an NPC class:
+Set a reaction cooldown in seconds for an NPC class
 
 ```lua
 VChat.NPCReactCooldowns["my_npc_class"] = 5
 ```
 
-VChat also tracks per-NPC, per-source cooldowns for supported integrations.
+VChat also provides functions for per NPC and per source cooldowns
 
 ### Trigger a Custom Sound
 
-Call `VChat.ReactAllNPCs` to make supported NPCs check a sound source:
+Call `VChat.ReactAllNPCs` to make supported NPCs check a sound source
 
 ```lua
 VChat.ReactAllNPCs(
@@ -163,11 +165,29 @@ VChat.ReactAllNPCs(
 )
 ```
 
-The arguments are the sound position, base range, source entity, sound name, volume, and whether this is voice chat.
+Arguments are sound position base range source entity sound name volume voice chat status optional source ID and optional sound data
+
+For other sounds pass `SoundLevel` and `Volume` in the final argument VChat uses them to estimate range up to the base range
+
+```lua
+VChat.ReactAllNPCs(
+    ent:GetPos(),
+    1500,
+    ent,
+    "custom alarm",
+    1,
+    false,
+    nil,
+    {
+        SoundLevel = 75,
+        Volume = 0.7
+    }
+)
+```
 
 ### Sound History
 
-VChat keeps recent sound records by player SteamID64. Read a player's history with:
+VChat keeps up to 100 recent sound records for each player using SteamID64
 
 ```lua
 local history = VChat.SoundHistory[ply:SteamID64()]
@@ -175,7 +195,7 @@ local history = VChat.SoundHistory[ply:SteamID64()]
 
 ### Other Addon Support
 
-The API can be used to add support for custom NPCs, NextBots, SNPC frameworks, weapons, entities, gamemodes, and sound sources.
+Use the API to support custom NPCs NextBots SNPC frameworks weapons entities gamemodes and sound sources
 
 ## Repository Structure
 
