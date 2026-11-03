@@ -1,18 +1,18 @@
 # VChat
 
-VChat lets supported NPCs react to player voice chat and other sounds.
+VChat lets supported NPCs react to player voice chat and other sounds
 
 ## Features
 
 - Voice chat detection with volume-based range
 - Wall and underwater muffling
-- Prop collision, door, footstep, gunshot, and explosion detection
+- Prop collision door footstep gunshot and explosion detection
 - Text chat and flashlight toggle detection
 - ActMod emote support
 - Media Player support
-- Configurable detection ranges, NPC support, and debug output
+- Configurable detection ranges NPC support and debug output
 
-Most optional sound detections are disabled by default.
+Most optional sound detections are disabled by default
 
 ## Supported NPC Bases
 
@@ -20,7 +20,7 @@ Most optional sound detections are disabled by default.
 - DrGBase NextBots
 - VJBase SNPCs
 
-Some NPCs may not investigate sounds correctly because of how their AI or movement is set up.
+Some NPCs may not investigate sounds correctly because of how their AI or movement is set up
 
 ## Settings
 
@@ -28,17 +28,17 @@ Open the settings from:
 
 `Q Menu → Utilities → VChat → VChat Settings`
 
-The menu includes voice detection, detection ranges, NPC base support, sound features, volume scaling, wall and underwater muffling, and debug mode.
+The menu includes voice detection detection ranges NPC base support sound features volume scaling wall and underwater muffling and debug mode
 
 ## NavMesh
 
-Some NPCs need a valid NavMesh to move toward a sound. On maps without one, an NPC may detect the sound but fail to reach its source.
+Some NPCs need a valid NavMesh to move toward a sound. On maps without one an NPC may detect the sound but fail to reach its source
 
 ## Contributing
 
-Contributions are welcome. Useful contributions include bug fixes, compatibility updates, testing, and small features. Contributors to the original VChat project will receive credit.
+Contributions are welcome Useful contributions include bug fixes compatibility updates testing and small features. Contributors to the original VChat project will receive credit
 
-You can also make your own version of VChat. If you make a useful fix or improvement, please share it with the original project so it can be considered for inclusion.
+You can also make your own version of VChat If you make a useful fix or improvement please share it with the original project so it can be considered for inclusion.
 
 ## For Developers
 
@@ -211,13 +211,13 @@ VChat/
 
 ## Forking
 
-You may fork and modify VChat. Keep the original credits, follow the license, and do not claim the original project as entirely your own.
+You may fork and modify VChat Keep the original credits, follow the license, and do not claim the original project as entirely your own
 
 ## Credits
 
-- **A-m-a2021** — Creator of VChat
-- **V0ID** — Development help
+- **A-m-a2021** - Creator of VChat
+- **V0ID** - Development help
 
 ## License
 
-VChat is licensed under the **VChat Custom Usage License**. It may be used, modified, and redistributed for free for non-commercial purposes. Full reuploads must include meaningful changes and credit **A-m-a2021 and V0ID - VChat**.
+VChat is licensed under the **VChat Custom Usage License**. It may be used modified and redistributed for free for non-commercial purposes Full reuploads must include meaningful changes and credit **A-m-a2021 and V0ID - VChat**
